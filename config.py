@@ -1,1 +1,1 @@
-CONFIG = "development"
+CONFIG = "feature-b"
