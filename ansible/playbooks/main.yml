@@ -1,0 +1,118 @@
+---
+- name: Complete Server Setup for DevOps Workflow
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    app_user: devops
+    app_home: /opt/devops-workflow
+    log_dir: /var/log/devops
+    python_version: "3.9"
+
+  tasks:
+    - name: Include environment variables
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ environment }}.yml"
+        - default.yml
+      tags: always
+
+    - name: Update apt cache (Debian/Ubuntu)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      tags: [common, packages]
+
+    - name: Install Python and required packages
+      package:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - git
+          - curl
+          - wget
+          - sqlite3
+        state: present
+      tags: [common, packages]
+
+    - name: Create application user
+      user:
+        name: "{{ app_user }}"
+        create_home: yes
+        shell: /bin/bash
+      tags: common
+
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      loop:
+        - "{{ app_home }}"
+        - "{{ log_dir }}"
+        - "{{ app_home }}/app"
+        - "{{ app_home }}/data"
+      tags: common
+
+    - name: Copy application code
+      synchronize:
+        src: "{{ playbook_dir }}/../../app/"
+        dest: "{{ app_home }}/app/"
+        delete: yes
+      tags: application
+
+    - name: Create virtual environment
+      command:
+        cmd: python3 -m venv {{ app_home }}/venv
+        creates: "{{ app_home }}/venv/bin/python"
+      become_user: "{{ app_user }}"
+      tags: application
+
+    - name: Install Python dependencies
+      pip:
+        requirements: "{{ app_home }}/app/requirements.txt"
+        virtualenv: "{{ app_home }}/venv"
+        virtualenv_python: python3
+      become_user: "{{ app_user }}"
+      tags: application
+
+    - name: Create systemd service file
+      template:
+        src: devops-app.service.j2
+        dest: /etc/systemd/system/devops-app.service
+        mode: '0644'
+      tags: service
+
+    - name: Enable and start service
+      systemd:
+        name: devops-app
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      tags: service
+
+    - name: Verify application is running
+      uri:
+        url: http://localhost:8080/health
+        status_code: 200
+        timeout: 5
+      register: app_status
+      until: app_status.status == 200
+      retries: 10
+      delay: 5
+      tags: verify
+
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "✅ Deployment complete!"
+          - "📂 App location: {{ app_home }}"
+          - "🌐 App URL: http://localhost:8080"
+          - "📊 Database: {{ app_home }}/data/transactions.db"
+          - "📝 Logs: {{ log_dir }}/app.log"
+      tags: verify
