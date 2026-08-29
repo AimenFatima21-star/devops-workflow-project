@@ -1,0 +1,364 @@
+"""
+Data Processing Application for DevOps Workflow
+A sample application that processes financial transactions
+"""
+
+import psycopg2
+import pandas as pd
+import os
+from datetime import datetime, timedelta
+import logging
+from dotenv import load_dotenv
+import sys
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=os.environ.get('LOG_LEVEL', 'INFO'),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('logs/app.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class DataProcessor:
+    """Main data processing class for transaction analysis"""
+    
+    def __init__(self):
+        """Initialize database connection"""
+        self.db_config = {
+            'host': os.environ.get('DB_HOST', 'postgres'),
+            'database': os.environ.get('DB_NAME', 'transactions'),
+            'user': os.environ.get('DB_USER', 'postgres'),
+            'password': os.environ.get('DB_PASSWORD', 'postgres'),
+            'port': os.environ.get('DB_PORT', '5432')
+        }
+        self.connection = None
+        logger.info("✅ DataProcessor initialized")
+        
+    def connect(self):
+        """Establish database connection"""
+        try:
+            self.connection = psycopg2.connect(**self.db_config)
+            logger.info("✅ Connected to database successfully")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to database: {e}")
+            return False
+            
+    def create_tables(self):
+        """Create required tables if they don't exist"""
+        if not self.connection:
+            logger.error("❌ No database connection")
+            return False
+            
+        cursor = self.connection.cursor()
+        
+        try:
+            # Create transactions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id SERIAL PRIMARY KEY,
+                    customer_id INTEGER NOT NULL,
+                    transaction_type VARCHAR(50) NOT NULL,
+                    amount DECIMAL(10, 2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status VARCHAR(20) DEFAULT 'completed'
+                )
+            """)
+            
+            # Create indexes for performance
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_transactions_customer 
+                ON transactions(customer_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_transactions_created 
+                ON transactions(created_at)
+            """)
+            
+            # Create customers table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    email VARCHAR(100),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            self.connection.commit()
+            logger.info("✅ Tables created successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create tables: {e}")
+            self.connection.rollback()
+            return False
+            
+    def load_sample_data(self):
+        """Load sample data for testing"""
+        if not self.connection:
+            logger.error("❌ No database connection")
+            return False
+            
+        cursor = self.connection.cursor()
+        
+        try:
+            # Check if data exists
+            cursor.execute("SELECT COUNT(*) FROM transactions")
+            count = cursor.fetchone()[0]
+            
+            if count > 0:
+                logger.info(f"ℹ️ Sample data already exists ({count} records)")
+                return True
+                
+            logger.info("📊 Loading sample data...")
+            
+            # Insert sample customers
+            customers = [
+                (1, 'Alice Johnson', 'alice@example.com'),
+                (2, 'Bob Smith', 'bob@example.com'),
+                (3, 'Carol White', 'carol@example.com'),
+                (4, 'Dave Brown', 'dave@example.com'),
+                (5, 'Eve Davis', 'eve@example.com')
+            ]
+            
+            cursor.executemany(
+                "INSERT INTO customers (id, name, email) VALUES (%s, %s, %s)",
+                customers
+            )
+            
+            # Insert sample transactions
+            base_date = datetime.now().date()
+            transactions = []
+            
+            for i in range(100):
+                customer_id = (i % 5) + 1
+                amount = round((i + 1) * 10.50, 2)
+                txn_date = base_date - timedelta(days=i % 30)
+                txn_type = ['purchase', 'refund', 'transfer', 'deposit', 'withdrawal'][i % 5]
+                
+                transactions.append((
+                    customer_id,
+                    txn_type,
+                    amount,
+                    txn_date
+                ))
+            
+            cursor.executemany(
+                "INSERT INTO transactions (customer_id, transaction_type, amount, created_at) VALUES (%s, %s, %s, %s)",
+                transactions
+            )
+            
+            self.connection.commit()
+            logger.info(f"✅ Loaded {len(transactions)} transactions")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load sample data: {e}")
+            self.connection.rollback()
+            return False
+            
+    def process_daily_transactions(self, date=None):
+        """
+        Process transactions for a specific date
+        
+        Args:
+            date: Optional date to process (defaults to today)
+        
+        Returns:
+            DataFrame with processed results
+        """
+        if date is None:
+            date = datetime.now().date()
+            
+        logger.info(f"📊 Processing transactions for {date}")
+        
+        # OPTIMIZED QUERY (with proper indexing)
+        query = """
+        SELECT 
+            t.customer_id,
+            t.transaction_type,
+            t.amount,
+            t.created_at,
+            c.name as customer_name
+        FROM transactions t
+        LEFT JOIN customers c ON t.customer_id = c.id
+        WHERE DATE(t.created_at) = %s
+        ORDER BY t.created_at
+        """
+        
+        try:
+            df = pd.read_sql_query(query, self.connection, params=[date])
+            logger.info(f"📊 Retrieved {len(df)} transactions")
+            
+            if df.empty:
+                logger.warning(f"ℹ️ No transactions found for {date}")
+                return pd.DataFrame()
+            
+            # Process data - customer summary
+            summary = df.groupby(['customer_id', 'customer_name']).agg({
+                'amount': ['sum', 'mean', 'count'],
+                'transaction_type': lambda x: x.value_counts().to_dict()
+            })
+            
+            # Flatten column names
+            summary.columns = ['total_amount', 'avg_amount', 'transaction_count', 'transaction_types']
+            summary = summary.reset_index()
+            
+            # Add processing timestamp
+            summary['processed_at'] = datetime.now()
+            
+            logger.info(f"✅ Processed {len(summary)} customers")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing transactions: {e}")
+            raise
+            
+    def get_performance_metrics(self):
+        """
+        Retrieve database performance statistics
+        
+        Returns:
+            Dict with performance metrics
+        """
+        if not self.connection:
+            logger.error("❌ No database connection")
+            return {}
+            
+        cursor = self.connection.cursor()
+        metrics = {}
+        
+        try:
+            # Get query execution stats
+            cursor.execute("""
+                SELECT 
+                    SUM(calls) as total_calls,
+                    SUM(total_exec_time) as total_time,
+                    AVG(mean_exec_time) as avg_time
+                FROM pg_stat_statements
+                WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+            """)
+            
+            row = cursor.fetchone()
+            if row:
+                metrics['total_queries'] = row[0] if row[0] else 0
+                metrics['total_time_ms'] = row[1] if row[1] else 0
+                metrics['avg_time_ms'] = row[2] if row[2] else 0
+            
+            # Get table statistics
+            cursor.execute("""
+                SELECT 
+                    schemaname,
+                    tablename,
+                    seq_scan,
+                    seq_tup_read,
+                    idx_scan,
+                    idx_tup_fetch
+                FROM pg_stat_user_tables
+                WHERE tablename IN ('transactions', 'customers')
+            """)
+            
+            metrics['tables'] = cursor.fetchall()
+            
+            logger.info("✅ Performance metrics retrieved")
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get performance metrics: {e}")
+            return metrics
+    
+    def health_check(self):
+        """Check if application is healthy"""
+        status = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'database': 'connected' if self.connection else 'disconnected'
+        }
+        
+        if self.connection:
+            try:
+                cursor = self.connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                status['database'] = 'connected'
+            except:
+                status['database'] = 'error'
+                status['status'] = 'unhealthy'
+        else:
+            status['status'] = 'unhealthy'
+            
+        return status
+    
+    def close(self):
+        """Close database connection"""
+        if self.connection:
+            self.connection.close()
+            logger.info("🔒 Database connection closed")
+
+def main():
+    """Main application entry point"""
+    logger.info("🚀 Starting Data Processing Application")
+    
+    processor = DataProcessor()
+    
+    try:
+        # Connect to database
+        if not processor.connect():
+            logger.error("❌ Failed to connect to database")
+            sys.exit(1)
+        
+        # Create tables
+        if not processor.create_tables():
+            logger.error("❌ Failed to create tables")
+            sys.exit(1)
+        
+        # Load sample data
+        processor.load_sample_data()
+        
+        # Process transactions
+        today = datetime.now().date()
+        results = processor.process_daily_transactions(today)
+        
+        if not results.empty:
+            print("\n" + "="*70)
+            print("📊 Daily Transaction Summary")
+            print("="*70)
+            print(results.to_string(index=False))
+            print("="*70)
+            print(f"Total Customers: {len(results)}")
+            print(f"Total Transactions: {results['transaction_count'].sum()}")
+            print(f"Total Amount: ${results['total_amount'].sum():,.2f}")
+            print("="*70)
+        else:
+            print("ℹ️ No transactions to process")
+        
+        # Show performance metrics
+        metrics = processor.get_performance_metrics()
+        if metrics:
+            print(f"\n📈 Performance Metrics:")
+            print(f"   Total Queries: {metrics.get('total_queries', 0)}")
+            print(f"   Total Time: {metrics.get('total_time_ms', 0):.2f}ms")
+            print(f"   Average Time: {metrics.get('avg_time_ms', 0):.2f}ms")
+        
+        # Health check
+        health = processor.health_check()
+        print(f"\n💚 Health Status: {health['status']}")
+        
+        logger.info("✅ Application completed successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Application error: {e}")
+        sys.exit(1)
+    finally:
+        processor.close()
+
+if __name__ == "__main__":
+    main()

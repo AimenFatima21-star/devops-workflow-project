@@ -1,0 +1,15 @@
+2026-08-28 18:12:04,811 - __main__ - INFO - 🚀 Starting Data Processing Application
+2026-08-28 18:12:04,813 - __main__ - INFO - ✅ DataProcessor initialized
+2026-08-28 18:12:04,849 - __main__ - INFO - ✅ Connected to database successfully
+2026-08-28 18:12:04,891 - __main__ - INFO - ✅ Tables created successfully
+2026-08-28 18:12:04,919 - __main__ - INFO - 📊 Loading sample data...
+2026-08-28 18:12:05,029 - __main__ - INFO - ✅ Loaded 100 transactions
+2026-08-28 18:12:05,031 - __main__ - INFO - 📊 Processing transactions for 2026-08-28
+2026-08-28 18:12:05,382 - __main__ - INFO - 📊 Retrieved 4 transactions
+2026-08-28 18:12:05,406 - __main__ - INFO - ✅ Processed 1 customers
+2026-08-28 18:12:05,456 - __main__ - ERROR - ❌ Failed to get performance metrics: column "tablename" does not exist
+LINE 4:                     tablename,
+                            ^
+
+2026-08-28 18:12:05,462 - __main__ - INFO - ✅ Application completed successfully
+2026-08-28 18:12:05,465 - __main__ - INFO - 🔒 Database connection closed

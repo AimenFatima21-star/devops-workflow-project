@@ -1,0 +1,18 @@
+[Unit]
+Description=DevOps Data Processing Application
+After=network.target
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_home }}
+Environment="PYTHONPATH={{ app_home }}"
+ExecStart={{ app_home }}/venv/bin/python {{ app_home }}/app/sqlite_app.py
+Restart=always
+RestartSec=10
+StandardOutput=append:{{ log_dir }}/app.log
+StandardError=append:{{ log_dir }}/app.log
+
+[Install]
+WantedBy=multi-user.target

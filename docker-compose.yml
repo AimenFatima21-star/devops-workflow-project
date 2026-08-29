@@ -1,0 +1,128 @@
+
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: devops-postgres
+    environment:
+      POSTGRES_DB: transactions
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts:/docker-entrypoint-initdb.d/scripts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d transactions"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - devops-network
+    restart: unless-stopped
+    command: >
+      -c shared_buffers=256MB
+      -c work_mem=64MB
+      -c effective_cache_size=1GB
+      -c log_statement=all
+      -c log_duration=on
+      -c shared_preload_libraries=pg_stat_statements
+
+  # Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devops-app
+    environment:
+      DB_HOST: postgres
+      DB_NAME: transactions
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_PORT: 5432
+      APP_ENV: development
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./app:/app
+      - ./logs:/var/log/app
+      - ./data:/data
+    networks:
+      - devops-network
+    restart: unless-stopped
+
+  # pgAdmin for Database Management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: devops-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@devops.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - devops-network
+    restart: unless-stopped
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  # Prometheus for Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: devops-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - devops-network
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # Grafana for Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: devops-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - devops-network
+    restart: unless-stopped
+
+networks:
+  devops-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  prometheus_data:
+  grafana_data:
